@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pixel Clock with Blind Effect</title>
+  <style>
+    @font-face {
+        font-family: 'establishRetrosansOTF';
+        src: url('https://fastly.jsdelivr.net/gh/projectnoonnu/noonfonts_2112@1.0/establishRetrosansOTF.woff') format('woff');
+        font-weight: normal;
+        font-style: normal;
+    }
+
+    body {
+      margin: 0;
+      background: black;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+    }
+
+    .blind {
+      position: absolute;
+      background: white;
+      color: black;
+      font-family: Arial, sans-serif;
+      font-size: 20px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      overflow: hidden;
+    }
+
+    #currentTimeLabel {
+      position: absolute;
+      top: 30%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      color: grey;
+      font-size: 50px;
+      text-align: center;
+      z-index: -1;
+    }
+
+    .message {
+      color: white;
+      font-family: Arial, sans-serif;
+      font-size: 24px;
+      text-align: center;
+      margin-top: 120px;
+      line-height: 1.5;
+      z-index: 10;
+      position: absolute;
+      top: 20px;
+    }
+
+  </style>
+</head>
+<body>
+
+  <div class="message">
+    Swipe if you're curious.<br>
+    Break if you want more.
+  </div>
+
+  <canvas id="clockCanvas"></canvas>
+  
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
+    import { getFirestore, collection, getDocs } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
+    import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-analytics.js";
+
+    // Firebase configuration
+    const firebaseConfig = {
+      apiKey: "AIzaSyD-uEPBMeMZ6C5w7Fi-6MM_bjjYdgiEuW0",
+      authDomain: "crucial-zodiac-440304-t8.firebaseapp.com",
+      projectId: "crucial-zodiac-440304-t8",
+      storageBucket: "crucial-zodiac-440304-t8.firebasestorage.app",
+      messagingSenderId: "31105663068",
+      appId: "1:31105663068:web:655d5c34c235e21251a699",
+      measurementId: "G-WDR9TH898C",
+    };
+
+    // Initialize Firebase
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app); // Pass the initialized app
+    const analytics = getAnalytics(app);
+
+    // Firestore data fetching
+    async function fetchFirestoreTexts() {
+      try {
+        const snapshot = await getDocs(collection(db, "shorts_titles"));
+        const texts = snapshot.docs.flatMap(doc => 
+          doc.data().titles.map(item => item.title)
+        );
+        return texts;
+      } catch (error) {
+        console.error("Error fetching Firestore texts:", error);
+        return [];
+      }
+    }
+
+
+
+    /*async function getRandomText() {
+      const texts = await fetchFirestoreTexts();
+      return texts.length > 0
+        ? texts[Math.floor(Math.random() * texts.length)]
+        : "No content available";
+    }*/
+
+    const canvas = document.getElementById('clockCanvas');
+    const ctx = canvas.getContext('2d');
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    const textSize = 140;
+    const blockSize = 20;
+    const fontName = 'establishRetrosansOTF';
+    const font = `${textSize}px ${fontName}`;
+
+    let trails = [];
+    let blinds = [];
+    window.blinds = blinds;
+    let blindSpeed = 7;
+    let speedIncrement = 0.0065;
+    let blocks = [];
+    let disabledAreas = [];
+    let fragments = [];
+    let trailBuffer = 10;
+    const maxTrailBuffer = 30;
+    const bufferIncrement = 0.05;
+    let isSwiping = false; // 스와이프 상태를 추적
+
+
+    createBlind(0, -canvas.height * 0.9, canvas.width, canvas.height, 0, 0, "제목");
+
+
+    function createBlind(x, y, width, height, dx, dy, text = "제목") {
+      blinds.push({ x, y, width, height, dx, dy, text });
+    }
+
+
+    // updateBlinds 함수 수정
+  function updateBlinds() {
+  blinds.forEach(async (blind, index) => {
+    // 블라인드 이동
+    blind.x += blind.dx;
+    blind.y += blind.dy;
+
+    // 시간 텍스트와 충돌 감지
+    const now = new Date();
+    const hours = String(now.getHours()).padStart(2, "0");
+    const minutes = String(now.getMinutes()).padStart(2, "0");
+    const seconds = String(now.getSeconds()).padStart(2, "0");
+    const milliseconds = String(now.getMilliseconds()).padStart(3, "0");
+    const timeText = `${hours}:${minutes}:${seconds}:${milliseconds}`;
+
+    const textWidth = ctx.measureText(timeText).width;
+    const timeArea = {
+      x: canvas.width / 2 - textWidth / 2,
+      y: canvas.height / 2 - textSize / 2,
+      width: textWidth,
+      height: textSize,
+    };
+
+    // 블라인드와 시간 텍스트 충돌 여부 확인
+    const isColliding =
+      blind.x < timeArea.x + timeArea.width &&
+      blind.x + blind.width > timeArea.x &&
+      blind.y < timeArea.y + timeArea.height &&
+      blind.y + blind.height > timeArea.y;
+
+    if (isColliding) {
+      // 시간 블록 파편화
+      blocks.forEach((block, blockIndex) => {
+        const isBlockColliding =
+          block.x + block.width > blind.x &&
+          block.x < blind.x + blind.width &&
+          block.y + block.height > blind.y &&
+          block.y < blind.y + blind.height;
+
+        if (isBlockColliding) {
+          const fragmentCount = 8;
+          for (let i = 0; i < fragmentCount; i++) {
+            const dx = (Math.random() - 0.5) * 10;
+            const dy = (Math.random() - 0.5) * 10;
+            fragments.push({
+              x: block.x,
+              y: block.y,
+              dx,
+              dy,
+              size: block.width / 2,
+              opacity: 1,
+            });
+          }
+          blocks.splice(blockIndex, 1);
+        }
+      });
+
+      // 블라인드 파편화
+      const blindFragmentCount = 24;
+      for (let i = 0; i < blindFragmentCount; i++) {
+        const dx = (Math.random() - 0.5) * 15;
+        const dy = (Math.random() - 0.5) * 15;
+        fragments.push({
+          x: blind.x + (i % 6) * (blind.width / 6),
+          y: blind.y + Math.floor(i / 6) * (blind.height / 4),
+          dx,
+          dy,
+          size: Math.min(blind.width / 30, blind.height / 20),
+          opacity: 1,
+        });
+      }
+
+      // 충돌한 블라인드 제거
+      blinds.splice(index, 1);
+
+      // 새 블라인드 생성
+      const randomDirection = [
+        { x: 0, y: -canvas.height * 0.9, dx: 0, dy: 0, text: "제목" },
+        { x: 0, y: canvas.height * 0.9, dx: 0, dy: 0, text: "제목" },
+        { x: -canvas.width * 0.9, y: 0, dx: 0, dy: 0, text: "제목" },
+        { x: canvas.width * 0.9, y: 0, dx: 0, dy: 0, text: "제목" },
+      ][Math.floor(Math.random() * 4)];
+
+      createBlind(
+        randomDirection.x,
+        randomDirection.y,
+        canvas.width,
+        canvas.height,
+        randomDirection.dx,
+        randomDirection.dy,
+        randomDirection.text
+      );
+    }
+
+    // 블라인드 렌더링
+    ctx.fillStyle = 'white';
+    ctx.fillRect(blind.x, blind.y, blind.width, blind.height);
+
+    // 블라인드 텍스트 렌더링
+    const text = blind.text || "Hello";
+    ctx.font = "20px Arial";
+    ctx.fillStyle = "red";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(
+      text,
+      blind.x + blind.width / 2,
+      blind.y + blind.height / 20
+    );
+  });
+
+  blindSpeed += speedIncrement;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+    function drawTime() {
+  const now = new Date();
+  const hours = String(now.getHours()).padStart(2, "0");
+  const minutes = String(now.getMinutes()).padStart(2, "0");
+  const seconds = String(now.getSeconds()).padStart(2, "0");
+  const milliseconds = String(now.getMilliseconds()).padStart(3, "0");
+  const timeText = `${hours}:${minutes}:${seconds}:${milliseconds}`;
+
+  ctx.font = font;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "white";
+
+  const textWidth = ctx.measureText(timeText).width;
+  ctx.fillText(timeText, canvas.width / 2, canvas.height / 2);
+
+  const imageData = ctx.getImageData(
+    canvas.width / 2 - textWidth / 2,
+    canvas.height / 2 - textSize / 2,
+    textWidth,
+    textSize
+  );
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  blocks = [];
+  for (let y = 0; y < imageData.height; y += blockSize) {
+    for (let x = 0; x < imageData.width; x += blockSize) {
+      const pixelIndex = (y * imageData.width + x) * 4;
+      const alpha = imageData.data[pixelIndex + 3];
+
+      if (alpha > 128) {
+        const block = {
+          x: canvas.width / 2 - textWidth / 2 + x,
+          y: canvas.height / 2 - textSize / 2 + y,
+          width: blockSize - 1,
+          height: blockSize - 1,
+        };
+
+        // 비활성화된 영역인지 확인
+        const isDisabled = disabledAreas.some(
+          (area) =>
+            block.x + block.width > area.x &&
+            block.x < area.x + area.width &&
+            block.y + block.height > area.y &&
+            block.y < area.y + area.height
+        );
+
+        if (!isDisabled) {
+          blocks.push(block);
+        }
+      }
+    }
+  }
+
+  drawBlocks();
+}
+
+
+
+
+      
+
+function drawBlocks() {
+  if (trailBuffer < maxTrailBuffer) {
+    trailBuffer = Math.min(trailBuffer + bufferIncrement, maxTrailBuffer);
+  }
+
+  blocks.forEach((block, index) => {
+    // 비활성화된 영역인지 확인
+    const isDisabled = disabledAreas.some(
+      (area) =>
+        block.x + block.width > area.x &&
+        block.x < area.x + area.width &&
+        block.y + block.height > area.y &&
+        block.y < area.y + area.height
+    );
+
+    if (isDisabled) return; // 비활성화된 영역은 그리지 않음
+
+    // 블록이 스와이프 경로에 있는지 확인 (스와이프 중일 때만 반응)
+    const isInTrail =
+      isSwiping &&
+      trails.some((trail) => {
+        return (
+          trail.x + trailBuffer > block.x &&
+          trail.x - trailBuffer < block.x + block.width &&
+          trail.y + trailBuffer > block.y &&
+          trail.y - trailBuffer < block.y + block.height
+        );
+      });
+
+    if (isInTrail) {
+      // 블록 파편화 로직
+      const fragmentCount = 8; // 블록을 4조각으로 나눔
+      for (let i = 0; i < fragmentCount; i++) {
+        const dx = (i % 2 === 0 ? -1 : 1) * Math.random(); // 좌우로 흩어지는 방향
+        const dy = (i < 2 ? -1 : 1) * Math.random(); // 위아래로 흩어지는 방향
+        const fragmentSize = block.width / 2; // 블록을 4등분
+
+        fragments.push({
+          x: block.x + (i % 2) * fragmentSize, // 왼쪽 또는 오른쪽
+          y: block.y + (i < 2 ? 0 : fragmentSize), // 위쪽 또는 아래쪽
+          dx: dx * 2, // 초기 수평 속도
+          dy: dy * 2, // 초기 수직 속도
+          size: fragmentSize,
+          opacity: 1,
+        });
+      }
+
+      // 비활성화 영역 추가
+      disabledAreas.push({
+        x: block.x,
+        y: block.y,
+        width: block.width,
+        height: block.height,
+      });
+
+      blocks.splice(index, 1); // 블록 제거
+    } else {
+      ctx.fillStyle = "white";
+      ctx.fillRect(block.x, block.y, block.width, block.height);
+    }
+  });
+
+  // 파편 렌더링 및 업데이트
+  drawFragments();
+}
+
+
+
+
+
+
+
+let settledFragments = []; // 바닥에 쌓인 파편 저장
+
+function drawFragments() {
+  const gravity = 0.5; // 중력 효과
+  const friction = 0.9; // 바닥에서의 마찰력
+  const collisionPadding = 0.5; // 충돌 여유 공간
+
+  fragments.forEach((fragment, index) => {
+    // 파편 색상 계산 (흰색 -> 빨간색)
+    fragment.colorStep = fragment.colorStep || 0; // 초기 색상 단계
+    fragment.colorStep = Math.min(fragment.colorStep + 0.01, 1); // 점차 빨간색으로 변화
+    const red = Math.round(255); // 고정 빨간값
+    const green = Math.round(255 - fragment.colorStep * 255); // 점차 감소
+    const blue = Math.round(255 - fragment.colorStep * 255); // 점차 감소
+    const color = `rgba(${red}, ${green}, ${blue}, ${fragment.opacity})`;
+
+    // 파편 렌더링
+    ctx.fillStyle = color;
+    ctx.fillRect(fragment.x, fragment.y, fragment.size, fragment.size);
+
+    // 중력 적용
+    fragment.dy += gravity;
+
+    // 위치 업데이트
+    fragment.x += fragment.dx;
+    fragment.y += fragment.dy;
+
+    // 바닥 또는 다른 파편과 충돌 처리
+    let isCollidingWithGround = fragment.y + fragment.size >= canvas.height;
+    let isCollidingWithSettled = false;
+
+    for (const settled of settledFragments) {
+      if (
+        fragment.x + fragment.size > settled.x - collisionPadding &&
+        fragment.x < settled.x + settled.size + collisionPadding &&
+        fragment.y + fragment.size >= settled.y &&
+        fragment.y <= settled.y + settled.size
+      ) {
+        isCollidingWithSettled = true;
+        fragment.y = settled.y - fragment.size; // 위에 쌓이도록 위치 조정
+        break;
+      }
+    }
+
+    if (isCollidingWithGround || isCollidingWithSettled) {
+      fragment.dy = 0; // 수직 속도 제거
+      fragment.dx *= friction; // 수평 속도 감소
+
+      // 멈춘 상태 감지
+      if (Math.abs(fragment.dx) < 0.5 && Math.abs(fragment.dy) < 0.5) {
+        // 색상이 완전히 빨간색이 되었으면 고정
+        if (fragment.colorStep >= 1) {
+          settledFragments.push({
+            x: fragment.x,
+            y: fragment.y,
+            size: fragment.size,
+          });
+          fragments.splice(index, 1); // 이동 중인 파편 제거
+        }
+      }
+    }
+
+    // 화면 밖으로 나가지 않도록 제한
+    if (fragment.x < 0) fragment.x = 0;
+    if (fragment.x + fragment.size > canvas.width)
+      fragment.x = canvas.width - fragment.size;
+  });
+
+  // 고정된 파편 렌더링
+  settledFragments.forEach((settled) => {
+    ctx.fillStyle = 'red'; // 고정된 조각은 빨간색
+    ctx.fillRect(settled.x, settled.y, settled.size, settled.size);
+  });
+}
+
+
+
+
+
+
+
+
+
+
+        function recoverDisabledAreas() {
+          setInterval(() => {
+            if (disabledAreas.length > 0) {
+              // 가장 오래된 비활성화된 영역을 제거
+              disabledAreas.shift();
+            }
+          }, 250); // 5초마다 복구
+        }
+
+        // 복구 함수 실행
+        recoverDisabledAreas();
+
+
+
+
+        function drawTrails() {
+          if (trails.length < 2) return;
+
+          ctx.lineCap = 'round';
+          for (let i = trails.length - 1; i > 0; i--) {
+            const trailStart = trails[i];
+            const trailEnd = trails[i - 1];
+            const opacity = trailStart.opacity;
+
+            if (opacity <= 0) continue;
+
+            ctx.beginPath();
+            ctx.lineWidth = Math.max(10 - (trails.length - i) * 1, 2);
+            ctx.strokeStyle = `rgba(255, 0, 0, ${opacity})`; // 빨간색 꼬리
+            ctx.moveTo(trailStart.x, trailStart.y);
+            ctx.lineTo(trailEnd.x, trailEnd.y);
+            ctx.stroke();
+            ctx.closePath();
+          }
+
+          trails = trails.filter(trail => trail.opacity > 0);
+        }
+
+        canvas.addEventListener('mousemove', (event) => {
+          const mouseX = event.clientX;
+          const mouseY = event.clientY;
+
+          trails.push({ x: mouseX, y: mouseY, opacity: 1 });
+
+          if (trails.length > 10) {
+            trails.shift();
+          }
+        });
+
+
+        // 스와이프 이벤트 핸들링
+canvas.addEventListener('mousedown', (event) => {
+  const swipeStart = { x: event.clientX, y: event.clientY };
+  isSwiping = true; // 스와이프 시작
+
+  canvas.addEventListener(
+    'mouseup',
+    (e) => {
+      const swipeEnd = { x: e.clientX, y: e.clientY };
+
+      // 스와이프 거리 계산
+      const dx = swipeEnd.x - swipeStart.x;
+      const dy = swipeEnd.y - swipeStart.y;
+
+      // 방향 제한 및 속도 설정
+      const distance = Math.sqrt(dx ** 2 + dy ** 2); // 스와이프 거리
+      const maxSpeed = 27; // 최대 속도 제한
+      const speedFactor = 10; // 거리 기반 속도 조정
+
+      const swipeSpeedX = Math.min(maxSpeed, speedFactor * Math.abs(dx));
+      const swipeSpeedY = Math.min(maxSpeed, speedFactor * Math.abs(dy));
+
+      let directionX = 0;
+      let directionY = 0;
+
+      if (Math.abs(dx) > Math.abs(dy)) {
+        // 수평 이동
+        directionX = dx > 0 ? swipeSpeedX : -swipeSpeedX;
+      } else {
+        // 수직 이동
+        directionY = dy > 0 ? swipeSpeedY : -swipeSpeedY;
+      }
+
+      blinds.forEach((blind) => {
+        // 스와이프 시 부드럽게 이동
+        blind.dx = directionX;
+        blind.dy = directionY;
+
+        // 감속 효과 추가
+        const deceleration = 0.95; // 감속 비율
+        const interval = setInterval(() => {
+          blind.dx *= deceleration;
+          blind.dy *= deceleration;
+
+          // 감속 종료 조건
+          if (Math.abs(blind.dx) < 0.1 && Math.abs(blind.dy) < 0.1) {
+            blind.dx = 0;
+            blind.dy = 0;
+            clearInterval(interval); // 감속 종료
+          }
+        }, 16); // 약 60fps
+      });
+
+      isSwiping = false; // 스와이프 종료
+      trails = []; // 스와이프 경로 초기화
+    },
+    { once: true }
+  );
+});
+
+
+
+let inactivityTimer = null; // 비활동 타이머
+let isInactive = false; // 비활동 상태 여부
+let recoveryIndex = 0; // 복구할 시간 블록의 인덱스
+let isRecovering = false; // 복구 중 상태
+
+// 비활동 타이머 초기화
+function resetInactivityTimer() {
+  if (isInactive || isRecovering) return;
+
+  clearTimeout(inactivityTimer);
+  inactivityTimer = setTimeout(() => {
+    isInactive = true;
+    recoverBlocksAndFragments();
+  }, 10000); // 10초
+}
+
+// 파편과 블록을 복구하는 함수
+function recoverBlocksAndFragments() {
+  if (isRecovering) return;
+
+  isRecovering = true;
+  const recoveryInterval = setInterval(() => {
+    // 파편 서서히 제거
+    if (fragments.length > 0) {
+      fragments.pop(); // 마지막 파편부터 하나씩 제거
+    }
+
+    // 시간 블록 복구
+    if (recoveryIndex < disabledAreas.length) {
+      const area = disabledAreas[recoveryIndex];
+      blocks.push({
+        x: area.x,
+        y: area.y,
+        width: area.width,
+        height: area.height,
+      });
+      recoveryIndex++;
+    }
+
+    // 작업 완료 조건 확인
+    if (fragments.length === 0 && recoveryIndex >= disabledAreas.length) {
+      clearInterval(recoveryInterval); // 복구 종료
+      disabledAreas = []; // 비활성화된 영역 초기화
+      recoveryIndex = 0; // 복구 인덱스 초기화
+      isRecovering = false; // 복구 중 상태 해제
+      location.reload(); // 페이지 새로고침
+    }
+  }, 100); // 0.1초 간격으로 복구
+}
+
+// 사용자 이벤트 발생 시 비활동 타이머 초기화
+["mousemove", "mousedown", "touchstart"].forEach((event) => {
+  document.addEventListener(event, () => {
+    resetInactivityTimer();
+    isInactive = false;
+  });
+});
+
+// 초기 타이머 설정
+resetInactivityTimer();
+
+// 업데이트 함수에서 복구 상태 확인
+function update() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (!isRecovering) {
+    drawTime();
+    updateBlinds();
+    drawTrails();
+  }
+  requestAnimationFrame(update);
+}
+
+update();
+
+
+    window.addEventListener('resize', () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    });
+
+
+    
+  </script>
+</body>
+</html>
